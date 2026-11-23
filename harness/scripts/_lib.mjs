@@ -103,6 +103,17 @@ export function imageError(raw) {
   // <image mediaid=.../> (media library) or <Image src=... dam-id=... /> (Content Hub)
   return /^<image\s[\s\S]*(\/>|<\/image>)$/i.test(v) ? "" : `literal value "${v.slice(0, 80)}" instead of image XML — use the imageFieldXml from images/image-manifest.json`;
 }
+// A corporate proxy or security agent that re-signs HTTPS makes Node refuse every call ("self-signed certificate in certificate chain") while
+// curl and the browser work, because Node does not read the operating system's certificate store by default. The fix is per shell.
+const TLS_CODES = new Set(["SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_GET_ISSUER_CERT", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "CERT_UNTRUSTED"]);
+/** A one-line fix when err (a failed fetch) is a certificate-trust error, else "". */
+export function tlsHint(err) {
+  const code = err?.cause?.code ?? err?.code ?? "";
+  if (!TLS_CODES.has(code) && !/self[- ]signed certificate|unable to (get|verify) .*certificate/i.test(`${err?.message ?? ""} ${err?.cause?.message ?? ""}`)) return "";
+  return `Node does not trust this network's HTTPS certificate (${code || "certificate error"}): a corporate proxy or security agent re-signs the traffic. ` +
+    `Make Node use the system certificates, then re-run: ${process.platform === "win32" ? `$env:NODE_OPTIONS="--use-system-ca"` : `export NODE_OPTIONS=--use-system-ca`} ` +
+    `(Node 22.15+ / 23.8+; on older Node set NODE_EXTRA_CA_CERTS to the company's root certificate file).`;
+}
 // Sitecore's media handler (.ashx) is not an image type. Sniff the bytes and rename to the real extension.
 // { path, ext } when the name is not .ashx (unchanged) or after a rename; null when the bytes are not a known image.
 export const ASHX_SNIFF_ERROR = "unrecognized image in .ashx file";
@@ -171,6 +182,21 @@ export async function edgeRoute(customer, route, { site, language } = {}) {
 }
 // plan path (/Home/x) -> site route (/x)
 export const routeOf = (planPath) => String(planPath).replace(/^\/home/i, "") || "/";
+// A MENU STUB: a navTarget page the demo never navigates to (no moment, no visit: true, not on a clickPath, no live mirror, not titleOnly).
+// It holds NO components: create_page + one update_fields_on_item (Title, __Display name, NavigationTitle, NavigationFilter); header and
+// footer come from the partial designs through the Page Design. `onPath` (optional): Set of lower-case clickPath page paths.
+export function isMenuStub(page, onPath) {
+  if (page?.navTarget !== true || page.visit === true || page.titleOnly === true) return false;
+  if ((Array.isArray(page.proves) && page.proves.length) || page.liveUrl || page.sectionsFile) return false;
+  const path = String(page.path ?? "").replace(/\/+$/, "").toLowerCase();
+  return !(onPath && onPath.has(path));
+}
+// every clickPath page of the plan's moments (lower-case, as validate-site-plan P15 reads them: "/Home/x (click: ...)" -> /home/x)
+export function clickPathPages(plan) {
+  const out = new Set();
+  for (const m of Array.isArray(plan?.story?.moments) ? plan.story.moments : []) for (const x of Array.isArray(m?.clickPath) ? m.clickPath : []) out.add((String(x).split(/\s+[(|]/)[0].trim().replace(/\/+$/, "") || "/").toLowerCase());
+  return out;
+}
 
 /* ---- section captures (section-capture.mjs output), shared by the gate, the validators and variants-verify ---- */
 export const PARTIAL_DESIGN_TEMPLATE = "{FD2059FD-6043-4DFE-8C04-E2437CE87634}";   // a real Partial Design

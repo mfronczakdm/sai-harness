@@ -29,7 +29,8 @@
  *               type that fits its name and value) (needs the Authoring client; no self-reported fallback); the app's code parses no field
  *               value for src= / href= and has no Image field for decoration (play button, arrow, quote mark, divider)
  *   placement   every planned page's headless-main renderings, read from the app's content endpoint (preview context = master), match the plan;
- *               no header/footer renderings on a page; no text in rendering parameters (content lives in datasource fields)
+ *               no header/footer renderings on a page; no text in rendering parameters (content lives in datasource fields); a menu stub
+ *               (navTarget page the demo never visits, sections: []) is served with an EMPTY headless-main (display name + navigation flag: content)
  *   images      every live image is in the manifest and uploaded (Content Hub, or the Media Library when CH_ENABLED=false); files over 50 MB are
  *               not uploaded but listed under "## Missing assets" and their sections are not failed for missing imagery
  *   looks       measurements exist; EVERY verdict (header, /Home, each mirrored page) exists, is stamped (url, reference hash, build fingerprint),
@@ -45,7 +46,7 @@ import { join, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ENV, ROOT, die, demoDir, customerApp, readJson, readRegistry, chromeBands, topLabels, isAdBand, edgeRoute, routeOf, authoringClient,
-  fileHash, textHash, sourceFingerprint, PARTIAL_DESIGN_TEMPLATE, PARTIAL_DESIGN_FOLDER } from "./_lib.mjs";
+  fileHash, textHash, sourceFingerprint, PARTIAL_DESIGN_TEMPLATE, PARTIAL_DESIGN_FOLDER, isMenuStub, clickPathPages } from "./_lib.mjs";
 import { parseYaml } from "./_yaml.mjs";
 import { looksState, diffId, ACCEPTED_FILE } from "./_looks.mjs";
 
@@ -67,8 +68,9 @@ if (process.argv[2] === "hook") {
   if (!existsSync(plan) || !/^userApproved:\s*true/m.test(readFileSync(plan, "utf8")) || existsSync(join(d, ".run-complete"))) out({});
   // the SE is deciding on measurement differences (looks-review.mjs): wait for the answer, do not restart
   if (existsSync(join(d, ".awaiting-se"))) out({});
-  // a run that stopped for the SE (Marketer MCP not connected, see demo-from-transcript T0) waits for /resume-demo: never auto-restart it
-  try { if (/^\s*blockedOn:\s*"?marketer-mcp-auth/m.test(readFileSync(join(d, "demo-progress.yaml"), "utf8"))) out({}); } catch { /* no progress yet */ }
+  // a run that stopped for the SE waits for /resume-demo: never auto-restart it. Any top-level blockedOn counts (marketer-mcp-auth,
+  // shared-layer-missing, content-hub-render, ...: demo-from-transcript "Stop only when"), not only the Marketer MCP login
+  try { if (/^[ \t]*blockedOn:[ \t]*"?[a-z0-9]/im.test(readFileSync(join(d, "demo-progress.yaml"), "utf8"))) out({}); } catch { /* no progress yet */ }
   const c = active.customer, n = Number(input.loop_count ?? 0) + 1;
   const r = spawnSync(process.execPath, [SELF, "check", c, "--fast"], { encoding: "utf8", timeout: 100000 });
   if (timedOut(r)) out({ followup_message: `The demo run for "${c}" is NOT finished (automatic restart ${n}). The fast gate did not finish within the hook's time. Run \`node harness/scripts/run-gate.mjs check ${c}\` yourself (it can take minutes), do the first failing item, and keep going until it exits 0.` });
@@ -220,7 +222,9 @@ if (cmd === "accept") {
   const file = join(demo, ACCEPTED_FILE), cur = readJson(file, { accepted: [] }), now = new Date().toISOString();
   for (const it of review.items.filter((i) => nums.includes(i.n))) {
     // one item is one section: accepting it accepts each of its differences, pinned to the measurement it came from
-    it.ids.forEach((id, k) => { if (!cur.accepted.some((a) => a.id === id)) cur.accepted.push({ id, what: it.what, ref: it.ref, refHash: fileHash(join(demo, it.ref)), page: it.label, diff: it.diffs[k], answer, acceptedAt: now }); });
+    // an id already accepted against an OLDER measurement (the reference was re-captured) is accepted again for the current one
+    const refHash = fileHash(join(demo, it.ref));
+    it.ids.forEach((id, k) => { if (!cur.accepted.some((a) => a.id === id && a.refHash === refHash)) cur.accepted.push({ id, what: it.what, ref: it.ref, refHash, page: it.label, diff: it.diffs[k], answer, acceptedAt: now }); });
   }
   writeFileSync(file, JSON.stringify(cur, null, 2) + "\n");
   try { unlinkSync(join(demo, ".awaiting-se")); } catch { /* not waiting */ }
@@ -401,7 +405,10 @@ const CHROME_RENDERINGS = /^(Eyebrow|Header|Navigation|NavigationHeader|SiteFoot
 stage = "placement";
 const pageRoutes = new Map();   // plan path -> served route, reused by the content checks
 {
-  const withSections = planPages.filter((p) => Array.isArray(p?.sections) && p.sections.length);
+  // menu stubs (sections: []) are checked too: the page must be served and its headless-main must be empty (header/footer come from the Page Design)
+  const onPath = clickPathPages(planObj);
+  const stubPaths = new Set(planPages.filter((p) => isMenuStub(p, onPath) && !(Array.isArray(p?.sections) && p.sections.length)).map((p) => p.path));
+  const withSections = planPages.filter((p) => (Array.isArray(p?.sections) && p.sections.length) || stubPaths.has(p.path));
   // a site name never contains a space (R21): the content endpoint knows such a site by another name, and every page then reads as missing
   let appSite = ""; try { appSite = (readFileSync(join(customerApp(customer, { mustExist: false }), ".env.local"), "utf8").match(/^NEXT_PUBLIC_DEFAULT_SITE_NAME=(.*)$/m)?.[1] ?? "").trim().replace(/^["']|["']$/g, ""); } catch { /* no app env: reported below */ }
   if (/\s/.test(appSite)) fail(`the app's site name "${appSite}" contains a space (NEXT_PUBLIC_DEFAULT_SITE_NAME)`, `Site names never contain spaces (R21). The SE sets NEXT_PUBLIC_DEFAULT_SITE_NAME in industry-verticals/${customer}/.env.local to the name SitecoreAI lists for the site (e.g. "${appSite.replace(/\s+/g, "")}"); restart the app so .sitecore/sites.json regenerates, then re-run.`);
@@ -411,13 +418,14 @@ const pageRoutes = new Map();   // plan path -> served route, reused by the cont
     if (routes && routes.some((r) => r === undefined)) fail(`the app's .env.local has no content context id or site name (SITECORE_EDGE_CONTEXT_ID, NEXT_PUBLIC_DEFAULT_SITE_NAME)`, `demo-new-site: write industry-verticals/${customer}/.env.local. The gate reads placements from the app's content endpoint; it has no file fallback.`);
     else if (routes && routes.length > 1 && routes.every((r) => r === null)) fail(`no page of the site is served by the app's content endpoint (site "${appSite}")`, "One cause, not missing pages: check that NEXT_PUBLIC_DEFAULT_SITE_NAME and the context id in the app's .env.local match the site as SitecoreAI lists it, then re-run.");
     else if (routes) withSections.forEach((p, i) => {
-      const r = routes[i], want = p.sections.map(plannedName).filter(Boolean);
+      const r = routes[i], want = stubPaths.has(p.path) ? [] : p.sections.map(plannedName).filter(Boolean);
       if (r) pageRoutes.set(p.path, r);
       if (r === null) { fail(`${p.path} is not served by the app's content endpoint`, "Create the page (or fix its name/path); check the site name and context id in the app's .env.local."); return; }
       // PartialDesignDynamicPlaceholder is how a page design injects a partial (e.g. an Event Hero) into the body: count what it contains, in place
       const expand = (list) => (list ?? []).flatMap((c) => (c.componentName === "PartialDesignDynamicPlaceholder" ? Object.values(c.placeholders ?? {}).flatMap(expand) : c.componentName ? [c.componentName] : []));
       const got = expand(r.placeholders?.["headless-main"]);
       if (got.some((n) => CHROME_RENDERINGS.test(n))) fail(`${p.path} has header/footer renderings in its own layout (${got.filter((n) => CHROME_RENDERINGS.test(n)).join(", ")})`, "Remove them from the page. Header and footer come only from the Header and Footer partial designs (template {FD2059FD-6043-4DFE-8C04-E2437CE87634}) via the Page Design. If the page shows no header, fix the partial and the Page Design mapping, never the page.");
+      else if (stubPaths.has(p.path) && got.length) fail(`${p.path} is a menu stub but holds ${got.join(", ")}`, `A menu stub has no components (sections: [] in the plan): remove them with remove_component_on_page (read back with get_components_on_page). Header and footer come from the Page Design.`);
       else if (got.join("|") !== want.join("|")) fail(`${p.path} renderings are ${got.join(", ") || "(none)"}; the plan is ${want.join(", ")}`, `Place the planned component with add_component_on_page (never by writing the page's layout field), or build the one marked fit: new. If another component fits the section better, change it in demo-plan.yaml and record why: run-gate.mjs swap ${customer} "<page path>#<live section>" --reason "<why>". Do not substitute Rich Text or put the layout in a Text field as HTML. Nothing in manual-tasks.md waives this.`);
     });
     // content belongs in datasource fields a marketer edits, never in rendering parameters (a heading written into a parameter to be matched)
@@ -456,7 +464,7 @@ if (site && gql && planPages.length) {
     });
     listFail(names, "display names differ from the plan", "Set __Display name in en (update_fields_on_item) to the plan's displayName, read it back.");
     listFail(nav, "navigation flags are wrong", "NavigationFilter: tick Main Navigation on every page except navGroup: main pages directly under Home (demo-site-bootstrap step 5b).");
-    listFail(local, "pages hold page-local datasource items", "Move each item under <site>/Data/<component folder> (create it there, set_component_datasource), then delete the page's Data folder once get_content_references shows 0.");
+    listFail(local, "pages hold page-local datasource items", `Move each item still in use under <site>/Data/<component folder> (create it there, set_component_datasource). Then run node harness/scripts/local-data-check.mjs ${customer}: it confirms no page layout (personalization rules included) references a local: datasource and lists the page Data folder ids; delete each folder with ONE delete_content, all of them after ONE SE confirmation (R5).`);
     // every datasource a page renders lives under the site's Data (or a partial design's own Data)
     const dsIds = new Map(), listsChildren = new Set();
     const walk = (list, path) => { for (const c of list ?? []) { if (c.dataSource) { dsIds.set(String(c.dataSource), `${path} ${c.componentName}`); if (Array.isArray(c.fields?.items)) listsChildren.add(String(c.dataSource)); } for (const sub of Object.values(c.placeholders ?? {})) walk(sub, path); } };
@@ -500,9 +508,19 @@ if (hasLive) {
   if (!manifest) fail("images not collected (images/image-manifest.json missing)", `node harness/scripts/collect-images.mjs ${customer} (every image of every planned section, traced to its page and section)`);
   else if (absent.length) fail(`${absent.length} image(s) of the live sections are not in images/image-manifest.json (e.g. ${absent[0].slice(0, 90)})`, `node harness/scripts/collect-images.mjs ${customer}, upload (content-hub-upload.mjs / media-upload.mjs), then node harness/scripts/attach-images.mjs ${customer} and write each proposed field with the MCP (uploaded is not attached).`);
   if (manifest) {
-    const ch = String(ENV.CH_ENABLED).toLowerCase() === "true";
+    // Content Hub only when it is on AND a Content Hub image was seen to reach the app (ch-render-check.mjs); otherwise the Media Library
+    const chk = readJson(join(demo, "images", "ch-render-check.json"));
+    const ch = String(ENV.CH_ENABLED).toLowerCase() === "true" && chk?.ok !== false;
     const notUp = manifestItems.filter((i) => i.uploadStatus !== "too-large" && !(i.uploadStatus === "uploaded" && i.imageFieldXml));
-    if (!manifestItems.length || notUp.length) fail(`${ch ? "Content Hub" : "Media Library"}: ${manifestItems.length ? `${notUp.length} of ${manifestItems.length} images not uploaded` : "no image uploaded"}`, `node harness/scripts/${ch ? "content-hub-upload.mjs" : "media-upload.mjs"} ${customer} (retries; files over 50 MB are listed under "## Missing assets" instead), then attach-images.mjs ${customer} --apply.`);
+    if (!manifestItems.length || notUp.length) fail(`${ch ? "Content Hub" : "Media Library"}: ${manifestItems.length ? `${notUp.length} of ${manifestItems.length} images not uploaded` : "no image uploaded"}`, `node harness/scripts/${ch ? "content-hub-upload.mjs" : `media-upload.mjs${String(ENV.CH_ENABLED).toLowerCase() === "true" ? " --force" : ""}`} ${customer} (retries; files over 50 MB are listed under "## Missing assets" instead), then attach-images.mjs ${customer} --apply.`);
+    // Content Hub values are only worth keeping when they render: an empty image on every page is not a built section
+    const chValues = manifestItems.filter((i) => /\bdam-id\s*=|stylelabs-content-id\s*=/i.test(String(i.imageFieldXml ?? "")));
+    if (chValues.length && chk?.ok !== true) fail(chk?.ok === false
+      ? `${chValues.length} image(s) hold Content Hub values, but Content Hub images do not render in this environment (images/ch-render-check.json)`
+      : `${chValues.length} image(s) hold Content Hub values that were never seen to render (images/ch-render-check.json missing or inconclusive)`,
+      chk?.ok === false
+        ? `Re-upload them to the Media Library (node harness/scripts/media-upload.mjs ${customer} --force), then attach-images.mjs ${customer} --apply; or the SE enables the DAM connector and node harness/scripts/ch-render-check.mjs ${customer} passes.`
+        : `node harness/scripts/ch-render-check.mjs ${customer} (the logo in the Header is enough).`);
   }
 }
 

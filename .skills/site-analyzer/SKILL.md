@@ -5,7 +5,7 @@ description: Decompose a client homepage into sections and match each to the tem
 
 # Site Analyzer
 
-> Rules: `.skills/RULES.md` (R1–R26) is the one source and wins over anything below; this skill refers to rules by number.
+> Rules: `.skills/RULES.md` (R1–R27) is the one source and wins over anything below; this skill refers to rules by number.
 
 > **Where this runs:** open the repo root. Paths such as `docs/ai/...` and `src/...` below belong to the customer app `industry-verticals/<customer>/` and never to `industry-verticals/prospera` (the read-only base app). If the customer is not clear from the conversation, ask first. Shared reference docs live in `.skills/sitecore-reference/references/`.
 
@@ -344,7 +344,7 @@ Only by the fit check above: a missing function or a missing field/item shape. I
 - Do not include invisible elements (modals, menus that aren't open)
 
 ## Menu pages
-Menu items nothing in the story visits are title-only stubs with `look: PageTitle` (heading-only variant; never a richer band's variant with empty fields, which prints "[No text in field]" in Pages). A menu page the demo navigates to (`proves` not empty or `visit: true`) is analysed like the homepage: capture it (`section-capture --url <page> --out sections-<slug>.json`) and map each live section to a component, variant or new (fit check). P14 enforces this.
+Menu items nothing in the story visits are menu stubs with `sections: []`: no components at all (only the Header/Footer partials through the Page Design), so nothing is analysed or mapped for them. A menu page the demo navigates to (`proves` not empty or `visit: true`) is analysed like the homepage: capture it (`section-capture --url <page> --out sections-<slug>.json`) and map each live section to a component, variant or new (fit check). P14 enforces this.
 
 ## Carousels and scrollers
 A section captured with `scroller: true` (or a content width beyond the viewport, many equal cards in one row) is a carousel or horizontal scroller. Do not map it onto a static column component with a variant: the demo would show a different thing. Use a carousel-capable component, or mark it `fit: new` (and list it at the gate). If it is deliberately simplified, say so in `fitReason`.

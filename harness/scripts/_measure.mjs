@@ -22,6 +22,8 @@ export function measureBand(idx) {
   let bgImage = urlOf(getComputedStyle(el).backgroundImage), bgImages = bgImage ? [bgImage] : [];
   for (const d of all) { const u = urlOf(getComputedStyle(d).backgroundImage); if (u && !bgImages.includes(u)) { const r = d.getBoundingClientRect(); if (r.width * r.height >= sr.width * sr.height * 0.12) bgImages.push(u); } }
   if (!bgImage && bgImages.length) bgImage = bgImages[0];
+  // smaller card photos painted as CSS backgrounds (e.g. a stacked card's thumbnail): listed so collect-images finds them, never chosen as the band background
+  for (const d of all) { const u = urlOf(getComputedStyle(d).backgroundImage); if (u && !bgImages.includes(u)) { const r = d.getBoundingClientRect(); if (r.width >= 80 && r.height >= 80 && r.width * r.height >= sr.width * sr.height * 0.02) bgImages.push(u); } }
   const sty = (e) => { const cs = getComputedStyle(e); return { fontFamily: (cs.fontFamily || "").split(",")[0].replace(/["']/g, "").trim(), fontSize: num(cs.fontSize), fontWeight: cs.fontWeight, textTransform: cs.textTransform, letterSpacing: cs.letterSpacing === "normal" ? 0 : num(cs.letterSpacing), lineHeight: cs.lineHeight === "normal" ? null : num(cs.lineHeight), color: hex(cs.color), textAlign: cs.textAlign }; };
   const direct = (e) => [...e.childNodes].some((n) => n.nodeType === 3 && clean(n.textContent));
   const els = [];
@@ -44,7 +46,7 @@ export function measureBand(idx) {
   const firstHeading = items.find((x) => x.role === "heading"), hSize = firstHeading ? num(getComputedStyle(firstHeading.e).fontSize) : null;
   // eyebrow = small uppercase / letter-spaced text that is not a link or button (above OR below the heading)
   for (const x of items) if (x.role === "text") { const cs = getComputedStyle(x.e), fs = num(cs.fontSize), t = clean(x.e.textContent); if (t.length <= 60 && ((cs.textTransform === "uppercase" || num(cs.letterSpacing) > 0.8 || t === t.toUpperCase()) && (!hSize || fs <= hSize * 0.85)) && fs <= 18) x.role = "eyebrow"; }
-  const elements = items.slice(0, 30).map((x) => { const cs = getComputedStyle(x.e); const o = { role: x.role, text: clean(x.e.textContent).slice(0, 80), x: Math.round(x.r.left), y: Math.round(x.r.top - sr.top), w: Math.round(x.r.width), h: Math.round(x.r.height) };
+  const elements = items.slice(0, 30).map((x) => { const cs = getComputedStyle(x.e); const o = { role: x.role, text: clean(x.e.textContent).slice(0, 400), x: Math.round(x.r.left), y: Math.round(x.r.top - sr.top), w: Math.round(x.r.width), h: Math.round(x.r.height) };
     if (x.role !== "image") { Object.assign(o, sty(x.e)); }
     if (x.role === "button") Object.assign(o, { background: ownBg(x.e), borderRadius: num(cs.borderTopLeftRadius), paddingX: num(cs.paddingLeft), paddingY: num(cs.paddingTop), border: parseFloat(cs.borderTopWidth) > 0 ? { width: num(cs.borderTopWidth), color: hex(cs.borderTopColor) } : null });
     if (x.e.tagName === "A") o.href = x.e.getAttribute("href") || "";
@@ -124,10 +126,11 @@ export function measureBand(idx) {
     adSlot: !!el.querySelector('iframe[src*="doubleclick"], iframe[id^="google_ads"], [id^="div-gpt-ad"], ins.adsbygoogle, [data-ad-slot], [class*="advert" i], [id*="advert" i]'),
     // a video is an embedded player, or a poster that opens one: a link to a video host or file, a play button (an element or an icon
     // image, e.g. alt "Play Video icon" / VideoPlayButton.svg over the poster), data-video* attributes
-    video: [...el.querySelectorAll("video, iframe")].some((v) => v.tagName === "VIDEO" || /youtu|vimeo|wistia|brightcove|vidyard|video|player/i.test(v.getAttribute("src") || v.getAttribute("data-src") || ""))
-      || [...el.querySelectorAll("img, svg")].some((i) => /(^|[^a-z])(play([^a-z]|$)|play-?(button|btn|icon|video)|video)/i.test(`${i.getAttribute("alt") || ""} ${i.getAttribute("aria-label") || ""} ${String(i.getAttribute("src") || "").split("?")[0].split("/").pop()}`))
-      || [...el.querySelectorAll("a[href], [data-src], [data-href]")].some((a) => /youtu\.?be|vimeo\.com|wistia|vidyard|brightcove|\.(mp4|webm|mov)(\?|$)/i.test(a.getAttribute("href") || a.getAttribute("data-src") || a.getAttribute("data-href") || ""))
-      || [...el.querySelectorAll("*")].some((d) => [...d.attributes].some((a) => /^data-(video|youtube|vimeo|wistia)/i.test(a.name))
+    // only what the visitor can see: a hidden, empty video modal in the markup is not a video in the band
+    video: [...el.querySelectorAll("video, iframe")].filter(vis).some((v) => v.tagName === "VIDEO" || /youtu|vimeo|wistia|brightcove|vidyard|video|player/i.test(v.getAttribute("src") || v.getAttribute("data-src") || ""))
+      || [...el.querySelectorAll("img, svg")].filter(vis).some((i) => /(^|[^a-z])(play([^a-z]|$)|play-?(button|btn|icon|video)|video)/i.test(`${i.getAttribute("alt") || ""} ${i.getAttribute("aria-label") || ""} ${String(i.getAttribute("src") || "").split("?")[0].split("/").pop()}`))
+      || [...el.querySelectorAll("a[href], [data-src], [data-href]")].filter(vis).some((a) => /youtu\.?be|vimeo\.com|wistia|vidyard|brightcove|\.(mp4|webm|mov)(\?|$)/i.test(a.getAttribute("href") || a.getAttribute("data-src") || a.getAttribute("data-href") || ""))
+      || [...el.querySelectorAll("*")].filter(vis).some((d) => [...d.attributes].some((a) => /^data-(video|youtube|vimeo|wistia)/i.test(a.name))
         || /(^|[\s_-])(play|play-?(button|btn|icon|video)|video-?(play|trigger|button|modal|popup))([\s_-]|$)/i.test(typeof d.className === "string" ? d.className : d.getAttribute("class") || "")
         || /^play\b|play video/i.test(d.getAttribute("aria-label") || d.getAttribute("title") || "")),
   };

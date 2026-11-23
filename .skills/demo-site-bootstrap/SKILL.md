@@ -5,7 +5,7 @@ description: Prepare a freshly created site: Data folders, Headless Variants, Av
 
 # Bootstrap a freshly created site so the shared components work in it
 
-> Rules: `.skills/RULES.md` (R1–R26) is the one source and wins over anything below; this skill refers to rules by number.
+> Rules: `.skills/RULES.md` (R1–R27) is the one source and wins over anything below; this skill refers to rules by number.
 
 A site made from a site template has the standard presentation scaffolding but none of the project-specific items that ProsperaFinancial-style sites carry. The shared definitions (templates, renderings, rendering parameters under the project layer, `renderingsRoot` in `docs/ai/config/project.yaml`) already exist and are REUSED. This skill creates only what lives INSIDE the new site. Use the Marketer MCP; how to do nested placeholders, datasources and variants is in `.skills/sitecore-reference/references/placeholders-and-variants.md` (earlier notes in `agent-api-limitations.md` are history, not rules).
 
@@ -14,7 +14,7 @@ A site made from a site template has the standard presentation scaffolding but n
 - Before every write: `node harness/scripts/guard-customer.mjs sitecore-path <customer> "<path>"`.
 - Use ids from the manifest ONLY for shared things (templates, folder templates, renderings, rendering parameters). Site-level ids in the manifest (any other site's `/sitecore/content/...` paths, variant definition ids, example items) belong to another site: never use or write them.
 - Record every id you create or find in `industry-verticals/<customer>/docs/ai/demos/<customer>/site-manifest.json`; all later phases read site-level ids from there.
-- Do not claim a write worked until you re-read it (several fields are silent-writes; see `sitecore-marketer-mcp-reference.md`).
+- Do not claim a write worked until you re-read it (several fields are silent-writes; see `harness/reference/marketer-mcp-tools.md`).
 
 ## Step 0 — Probe (read-only)
 With `get_content_item_by_path`, list and record in `site-probe.json`: `/sitecore/content/<coll>/<site>` children; `Home`; `Data`; `Presentation/{Available Renderings, Headless Variants, Partial Designs, Page Designs, Styles}`; `Settings`. Also confirm the shared layer exists (`renderingsRoot`, `projectTemplatesRoot` from `docs/ai/config/project.yaml`). If the shared layer is missing in this environment or collection, STOP and tell the SE: the components are not registered there and that is a separate (new-component) job.
@@ -66,6 +66,19 @@ A partial design is an item in `Presentation/Partial Designs` that carries compo
    **Footer partial design:** `SiteFooter` (rendering name in the manifest; data source = a footer item you create under the partial's `Data`, fields filled from the measured footer). The column headings are the links and headings that share the top edge of the footer section in `sections.json`. Fill one column per heading, then read the item back. A field still equal to the Footer template standard value (`Why PLAY! finance`, `Copyright © Sitecore`, or the other sample columns) means the footer was not filled. Four title/text pairs cannot hold a longer row: that footer is a new component (`sitecore-create-demo-variants`), not a recolor of `Default`. The footer logo follows the same rule as the header logo: use the logo as displayed in the footer section of `sections.json` (`images[]`, `hasLogo`, `background`) and run the contrast check against the footer `background` (a dark logo on a dark footer is the typical failure). Footer titles/headings use the measured colours of the footer section, never the theme accent (the theme accent is often the wrong colour for titles).
    Rejected because the item is not a page? Try the variant the tool schema allows (see `harness/reference/marketer-mcp-tools.md`), once, then the layout-XML route in `placeholders-and-variants.md`. If one component still fails after two routes, continue with the others, record the exact error in `harness/reference/marketer-mcp-tools.md` → "Verified methods", and add ONE `BLOCKED after 2 attempts` line naming only what is missing (component, placeholder, data source, variant).
 3. Create Page Designs `Page` and `Article` (page design template from step 1) listing the `Header` and `Footer` partials (plus any body partial the reference uses), then set the **Template To Design** mapping on the Page Designs folder: derived `Page`/`Landing` templates → `Page` design, derived `Article` template → `Article` design. Append to an existing mapping value, never replace it. Re-read to confirm.
+3b. **Do Content Hub images render here?** (only when the logo went to Content Hub.) `node harness/scripts/ch-render-check.mjs <customer>`: it reads
+   Home from the app's content endpoint and compares the logo's rendered value with its value on master. Without the environment's DAM connector a
+   Content Hub image reaches the app EMPTY, on every page, while Sitecore shows it fine (two earlier demos ended with no images at all).
+   - Exit 0: carry on; `content-hub-upload.mjs` now uploads the rest.
+   - Exit 3 (inconclusive: Home does not show the header yet): carry on. The bulk upload is allowed, and `run-gate.mjs` requires the check to
+     pass on a built page later (run it again with `--route <first sub-page>` once that page exists).
+   - Exit 2 (they do not render): ask ONE `AskUserQuestion`: "Content Hub images do not render in this Sitecore environment (its DAM connector
+     is most likely not enabled). Use the Media Library for this demo?" with "Use the Media Library (Recommended)" / "Stop: I will enable the DAM
+     connector". Media Library → `node harness/scripts/media-upload.mjs <customer> --force` (the logo included), write the logo's new
+     `imageFieldXml` into the Header item's `LogoImage`, and from now on use `media-upload.mjs --force` wherever a step says
+     `content-hub-upload.mjs`; add one line under `## Info` in `manual-tasks.md` ("Images are in the Media Library: Content Hub images do not
+     render in this environment"). Stop → `blockedOn: content-hub-render` (demo-from-transcript "Stop only when") and end the turn saying
+     the connector must be enabled, then `/resume-demo <customer>`. Never hand-write image XML in another format to get round it.
 4. Verify later (demo-build-pages step 2): the first sub-page renders header and footer. **The Header and Footer partial designs and the Page Designs are CORE: Cursor creates them** (steps 5 and 3 above; the SE never builds them by hand). The rest of the build may continue while one failed item is retried, but the run is not finished until they exist (`run-gate.mjs`).
 
 ## Step 5b — Main menu (top level only) and the eyebrow bar
